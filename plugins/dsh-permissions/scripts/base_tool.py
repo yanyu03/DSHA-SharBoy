@@ -1155,6 +1155,7 @@ class BaseTool(ABC):
         extensions=None,
         exact_filenames=None,
         weight=1.0,
+        trusted_executable_roots=None,
     ):
         self.id = tool_id
         self.name = name
@@ -1169,6 +1170,11 @@ class BaseTool(ABC):
         self.extensions = extensions or []
         self.exact_filenames = exact_filenames or []
         self.weight = weight
+        # None preserves the legacy PATH fallback for third-party extensions.
+        # An explicit sequence (including an empty one) disables that fallback.
+        self.trusted_executable_roots = (
+            None if trusted_executable_roots is None else tuple(trusted_executable_roots)
+        )
 
     def assert_environment(self):
         """Verifies that all required host runtimes are installed."""
@@ -1255,10 +1261,41 @@ class BaseTool(ABC):
             user_home / ".gemini" / "config" / cmd_name,
             repo_root / cmd_name,
         ]
+        # Extensions opting into explicit roots search those roots first.
+        # Never fall back to the ambient PATH in that mode.
+        strict_extension = (
+            self.id not in {"cf", "rea", "scribe", "pwsh", "sh", "tier", "meter"}
+            and self.trusted_executable_roots is not None
+        )
+        if strict_extension:
+            is_bare_command = (
+                isinstance(cmd_name, str)
+                and cmd_name not in ("", ".", "..")
+                and not any(sep in cmd_name for sep in ("/", "\\", ":"))
+            )
+            if not is_bare_command:
+                return None
+            for configured_root in self.trusted_executable_roots:
+                try:
+                    root = Path(configured_root)
+                    if not root.is_absolute():
+                        continue
+                    root = root.resolve()
+                    candidate = shutil.which(cmd_name, path=str(root))
+                    if candidate:
+                        resolved_candidate = Path(candidate).resolve()
+                        resolved_candidate.relative_to(root)
+                        if resolved_candidate.is_file():
+                            return str(resolved_candidate)
+                except (OSError, TypeError, ValueError):
+                    continue
+
         for p in candidate_locations:
             if p.is_file():
                 return str(p)
 
+        if strict_extension:
+            return None
         which_path = shutil.which(cmd_name)
         if which_path:
             return which_path
@@ -1284,7 +1321,32 @@ class BaseTool(ABC):
                 return True, None
             except ValueError:
                 continue
-        which_path = shutil.which(self.cmd)
+        # PATH fallback is only for a bare declared command. shutil.which() also
+        # accepts explicit paths; those must not bypass the trusted-root check.
+        is_bare_command = (
+            isinstance(self.cmd, str)
+            and self.cmd not in ("", ".", "..")
+            and not any(sep in self.cmd for sep in ("/", "\\", ":"))
+        )
+        # Built-in tools never gain extra roots through extension configuration.
+        # Extensions may opt into explicit, absolute trusted roots. In that mode
+        # an untrusted PATH match is rejected rather than silently accepted.
+        is_builtin_tool = self.id in {"cf", "rea", "scribe", "pwsh", "sh", "tier", "meter"}
+        if not is_builtin_tool and self.trusted_executable_roots is not None:
+            for configured_root in self.trusted_executable_roots:
+                configured_root = Path(configured_root)
+                if not configured_root.is_absolute():
+                    continue
+                try:
+                    target.relative_to(configured_root.resolve())
+                    return True, None
+                except ValueError:
+                    continue
+        which_path = (
+            shutil.which(self.cmd)
+            if is_bare_command and not is_builtin_tool and self.trusted_executable_roots is None
+            else None
+        )
         if which_path and Path(which_path).resolve() == target:
             return True, None
         err = ErrBlock(

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 import types
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -154,7 +155,17 @@ class RuntimeContracts(unittest.TestCase):
         for m in self.copies('base_tool.py'):
             with self.subTest(module=m.__file__):
                 tool = m.TOOL_REGISTRY.get('scribe')
-                res = tool.execute(['status'], {'timeout': 10})
+                # Unit-test the receipt, not the platform-specific scribe.cmd launcher.
+                with (
+                    patch.object(m, 'get_active_tier', return_value='auto'),
+                    patch.object(tool, 'assert_environment', return_value=(True, None)),
+                    patch.object(tool, 'resolve_executable', return_value=sys.executable),
+                    patch.object(tool, 'assert_target_contained', return_value=(True, None)),
+                    patch.object(m.subprocess, 'run', return_value=types.SimpleNamespace(returncode=0, stdout='ok', stderr='')) as run,
+                    patch.object(m.TraceStore, 'save', return_value=None),
+                ):
+                    res = tool.execute(['status'], {'timeout': 10})
+                    run.assert_called_once()
                 self.assertIn('trace_receipt', res)
                 receipt = res['trace_receipt']
                 self.assertEqual(receipt['protocol'], 'dsha-1.2.0-std')
@@ -178,7 +189,19 @@ class RuntimeContracts(unittest.TestCase):
 
                 # 2. Refusal retrace on tier authorization
                 pwsh = m.TOOL_REGISTRY.get('pwsh')
-                res_deny = pwsh.execute(context={'tier': 'read-only'})
+                # This is a Stage 4 unit test: do not depend on the host's pwsh probe.
+                with (
+                    patch.object(pwsh, 'assert_environment', return_value=(True, None)),
+                    patch.object(m, 'get_active_tier', return_value='auto'),
+                    patch.object(pwsh, 'resolve_executable') as resolve,
+                    patch.object(m.subprocess, 'run') as run,
+                    patch.object(m.TraceStore, 'save', return_value=None),
+                ):
+                    res_deny = pwsh.execute(context={'tier': 'read-only'})
+                    resolve.assert_not_called()
+                    run.assert_not_called()
+                self.assertEqual(res_deny['exit_code'], 126)
+                self.assertEqual(res_deny['trace_receipt']['causal_chain']['failed_stage'], 'tier_authorization')
                 retrace_deny = m.retrace(res_deny)
                 self.assertIn('ERR_PERMISSION_DENIED', retrace_deny)
                 self.assertIn('4/7: 权限档位核验', retrace_deny)
@@ -188,12 +211,150 @@ class RuntimeContracts(unittest.TestCase):
         for m in self.copies('base_tool.py'):
             with self.subTest(module=m.__file__):
                 tool = m.TOOL_REGISTRY.get('scribe')
-                res = tool.execute(['status'], {'timeout': 10})
-                tid = res['trace_id']
-                retrieved = m.TraceStore.get(tid)
-                self.assertIsNotNone(retrieved)
-                self.assertEqual(retrieved.get('trace_id'), tid)
-                self.assertEqual(retrieved.get('status'), 'PASS')
+                # Exercise real receipt serialization in a disposable directory.
+                with tempfile.TemporaryDirectory() as trace_dir:
+                    with (
+                        patch.object(m, 'get_active_tier', return_value='auto'),
+                        patch.object(tool, 'assert_environment', return_value=(True, None)),
+                        patch.object(tool, 'resolve_executable', return_value=sys.executable),
+                        patch.object(tool, 'assert_target_contained', return_value=(True, None)),
+                        patch.object(m.subprocess, 'run', return_value=types.SimpleNamespace(returncode=0, stdout='ok', stderr='')) as run,
+                        patch.object(m.TraceStore, 'get_trace_dir', return_value=Path(trace_dir)),
+                    ):
+                        res = tool.execute(['status'], {'timeout': 10})
+                        run.assert_called_once()
+                        tid = res['trace_id']
+                        self.assertTrue((Path(trace_dir) / f'{tid}.json').is_file())
+                        retrieved = m.TraceStore.get(tid)
+                        self.assertIsNotNone(retrieved)
+                        self.assertEqual(retrieved.get('trace_id'), tid)
+                        self.assertEqual(retrieved.get('status'), 'PASS')
+
+    def test_stage5_path_fallback_blocks_builtin_shadow_and_explicit_paths(self):
+        # Built-in launchers must use trusted roots; extensions retain legacy PATH fallback.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            external = str(Path(tmp) / 'external-tool')
+            for m in self.copies('base_tool.py'):
+                tool = m.PwshTool()
+                for declared in (external, './external-tool', r'C:\tools\external-tool.exe', 'C:external-tool.exe'):
+                    tool.cmd = declared
+                    with self.subTest(module=m.__file__, declared=declared), patch.object(m.shutil, 'which', return_value=external) as which:
+                        accepted, err = tool.assert_target_contained(external)
+                        self.assertFalse(accepted)
+                        self.assertEqual(err.error_code, 'ERR_TARGET_OUTSIDE_SANDBOX')
+                        which.assert_not_called()
+                tool.cmd = 'external-tool'
+                with self.subTest(module=m.__file__, declared='builtin-PATH-shadow'), patch.object(m.shutil, 'which', return_value=external) as which:
+                    accepted, err = tool.assert_target_contained(external)
+                    self.assertFalse(accepted)
+                    self.assertEqual(err.error_code, 'ERR_TARGET_OUTSIDE_SANDBOX')
+                    which.assert_not_called()
+                tool.id = 'external-extension'
+                with self.subTest(module=m.__file__, declared='extension-bare-PATH'), patch.object(m.shutil, 'which', return_value=external) as which:
+                    self.assertTrue(tool.assert_target_contained(external)[0])
+                    which.assert_called_once_with('external-tool')
+                trusted = Path(m.__file__).resolve().parent.parent / 'bin' / 'trusted-tool'
+                tool.cmd = str(trusted)
+                with self.subTest(module=m.__file__, declared='trusted-root'), patch.object(m.shutil, 'which', return_value=None):
+                    self.assertTrue(tool.assert_target_contained(str(trusted))[0])
+
+    def test_extension_explicit_trusted_roots_are_fail_closed(self):
+        # Opt-in extension roots must not inherit PATH trust or widen built-in roots.
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            trusted = Path(tmp) / 'trusted'
+            untrusted = Path(tmp) / 'untrusted'
+            trusted.mkdir()
+            untrusted.mkdir()
+            trusted_target = str(trusted / 'ext-tool')
+            shadow = str(untrusted / 'ext-tool')
+            for m in self.copies('base_tool.py'):
+                def extension(roots=None):
+                    return m.BaseTool(
+                        tool_id='external-extension', name='External extension',
+                        category=m.ToolCategory.SYSADMIN,
+                        risk_level=m.RiskLevel.LOW, version='0.1',
+                        description='Fixture', cmd='ext-tool',
+                        trusted_executable_roots=roots,
+                    )
+
+                with self.subTest(module=m.__file__, case='opt-in-shadow'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    ok, err = extension([str(trusted)]).assert_target_contained(shadow)
+                    self.assertFalse(ok)
+                    self.assertEqual(err.error_code, 'ERR_TARGET_OUTSIDE_SANDBOX')
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='opt-in-trusted'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    self.assertTrue(extension([str(trusted)]).assert_target_contained(trusted_target)[0])
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='empty-roots'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    self.assertFalse(extension([]).assert_target_contained(shadow)[0])
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='relative-root'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    self.assertFalse(extension(['relative-root']).assert_target_contained(shadow)[0])
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='legacy-compatibility'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    self.assertTrue(extension().assert_target_contained(shadow)[0])
+                    which.assert_called_once_with('ext-tool')
+
+                with self.subTest(module=m.__file__, case='builtin-cannot-opt-in'), patch.object(m.shutil, 'which', return_value=shadow) as which:
+                    builtin = m.PwshTool()
+                    builtin.trusted_executable_roots = (str(untrusted),)
+                    self.assertFalse(builtin.assert_target_contained(shadow)[0])
+                    which.assert_not_called()
+
+    def test_extension_trusted_root_resolution_ignores_path_shadow(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            trusted, shadow = root / 'trusted', root / 'shadow'
+            trusted.mkdir()
+            shadow.mkdir()
+            trusted_file = trusted / 'kdi-fatfish-fixture'
+            shadow_file = shadow / 'kdi-fatfish-fixture'
+            trusted_file.write_text('trusted', encoding='utf-8')
+            shadow_file.write_text('shadow', encoding='utf-8')
+
+            def which_for_trusted(name, path=None):
+                return str(trusted_file) if path == str(trusted.resolve()) else str(shadow_file)
+
+            for m in self.copies('base_tool.py'):
+                def extension(roots=None, cmd='kdi-fatfish-fixture'):
+                    return m.BaseTool(
+                        tool_id='external-extension', name='External extension',
+                        category=m.ToolCategory.SYSADMIN,
+                        risk_level=m.RiskLevel.LOW, version='0.1',
+                        description='Fixture', cmd=cmd,
+                        trusted_executable_roots=roots,
+                    )
+
+                with self.subTest(module=m.__file__, case='trusted-first'), patch.object(m.shutil, 'which', side_effect=which_for_trusted) as which:
+                    self.assertEqual(extension([str(trusted)]).resolve_executable(), str(trusted_file.resolve()))
+                    which.assert_called_once_with('kdi-fatfish-fixture', path=str(trusted.resolve()))
+
+                with self.subTest(module=m.__file__, case='shadow-rejected'), patch.object(m.shutil, 'which', return_value=str(shadow_file)) as which:
+                    self.assertIsNone(extension([str(trusted)]).resolve_executable())
+                    which.assert_called_once_with('kdi-fatfish-fixture', path=str(trusted.resolve()))
+
+                with self.subTest(module=m.__file__, case='empty-roots'), patch.object(m.shutil, 'which', return_value=str(shadow_file)) as which:
+                    self.assertIsNone(extension([]).resolve_executable())
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='relative-root'), patch.object(m.shutil, 'which', return_value=str(shadow_file)) as which:
+                    self.assertIsNone(extension(['relative-root']).resolve_executable())
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='path-like-command'), patch.object(m.shutil, 'which', return_value=str(shadow_file)) as which:
+                    self.assertIsNone(extension([str(trusted)], cmd='../kdi-fatfish-fixture').resolve_executable())
+                    which.assert_not_called()
+
+                with self.subTest(module=m.__file__, case='legacy-compatibility'), patch.object(m.shutil, 'which', return_value=str(shadow_file)) as which:
+                    self.assertEqual(extension().resolve_executable(), str(shadow_file))
+                    which.assert_called_once_with('kdi-fatfish-fixture')
 
     def test_open_protocol_schema_definitions(self):
         for m in self.copies('base_tool.py'):

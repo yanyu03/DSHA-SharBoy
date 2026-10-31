@@ -1,0 +1,72 @@
+name: KDI-01 fatfish runtime contracts
+
+on:
+  push:
+    branches: [fatfish]
+    paths:
+      - .github/workflows/fatfish-runtime-contracts.yml
+      - scripts/base_tool.py
+      - scripts/index.py
+      - scripts/router.py
+      - scripts/dsha_env.py
+      - scripts/test_runtime_contracts.py
+      - scripts/kdi_protocol_preflight.py
+      - scripts/test_kdi_protocol_preflight.py
+      - scripts/kdi_preparation_gate.py
+      - scripts/test_kdi_preparation_gate.py
+      - scripts/kdi_resource_admission.py
+      - scripts/test_kdi_resource_admission.py
+      - scripts/test_windows_launcher_integration.py
+      - plugins/dsh-permissions/scripts/base_tool.py
+      - plugins/dsh-permissions/scripts/router.py
+      - plugins/dsh-permissions/scripts/dsha_env.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile dispatch modules
+        run: |
+          python -m py_compile scripts/base_tool.py scripts/index.py scripts/router.py scripts/test_runtime_contracts.py plugins/dsh-permissions/scripts/base_tool.py
+      - name: KDI-P01 protocol preflight (isolated)
+        run: |
+          python -m py_compile scripts/kdi_protocol_preflight.py scripts/test_kdi_protocol_preflight.py
+          python -m unittest -v scripts.test_kdi_protocol_preflight
+      - name: KDI-P02 preparation cancellation consistency (isolated)
+        run: |
+          python -m py_compile scripts/kdi_preparation_gate.py scripts/test_kdi_preparation_gate.py
+          python -m unittest -v scripts.test_kdi_preparation_gate
+      - name: KDI-P03 bounded resource admission (isolated)
+        run: |
+          python -m py_compile scripts/kdi_resource_admission.py scripts/test_kdi_resource_admission.py
+          python -m unittest -v scripts.test_kdi_resource_admission
+      - name: Run Stage 5 positive and negative regression
+        run: |
+          python -m unittest -v \
+            scripts.test_runtime_contracts.RuntimeContracts.test_stage5_path_fallback_blocks_builtin_shadow_and_explicit_paths \
+            scripts.test_runtime_contracts.RuntimeContracts.test_extension_explicit_trusted_roots_are_fail_closed \
+            scripts.test_runtime_contracts.RuntimeContracts.test_extension_trusted_root_resolution_ignores_path_shadow
+      - name: Run full runtime contract regression
+        run: python -m unittest -v scripts.test_runtime_contracts
+
+  windows-scribe-launcher:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile Windows integration test
+        run: python -m py_compile scripts/test_windows_launcher_integration.py
+      - name: Run native Scribe launcher and TraceReceipt integration
+        run: python -m unittest -v scripts.test_windows_launcher_integration
