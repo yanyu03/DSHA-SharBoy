@@ -6,6 +6,9 @@ cannot authenticate that configuration or constrain standalone Scribe.
 
 import os
 import stat
+import math
+import time
+from dataclasses import dataclass
 from pathlib import Path
 
 
@@ -155,5 +158,53 @@ def bind_host_audit_source(host_token, audit_source):
         if observed is not True:
             raise ManagedOutputError('host audit incomplete or refused')
         return None  # Evidence only, never a write capability.
+
+    return inspect
+
+@dataclass(frozen=True)
+class HostAuditObservation:
+    """Immutable, process-local host audit observation; never a write grant."""
+    status: str
+    observed_monotonic: float
+    revoked: bool
+
+
+def bind_host_audit_observation_source(host_token, audit_source, *, max_age_seconds, clock=None):
+    """Bind a host-owned observation source and enforce freshness, fail-closed.
+
+    Monotonic timestamps are valid only within the same host clock domain.
+    This is isolated evidence checking, not ACL or mount auditing, nor a grant.
+    A hostile Python interpreter/bootstrap remains outside this trust boundary.
+    """
+    inspect_identity = bind_host_registration_identity(host_token)
+    if not callable(audit_source):
+        raise ManagedOutputError('trusted audit observation source required')
+    if (type(max_age_seconds) not in (int, float)
+            or not math.isfinite(max_age_seconds) or max_age_seconds <= 0):
+        raise ManagedOutputError('finite positive audit max age required')
+    if clock is None:
+        clock = time.monotonic
+    if not callable(clock):
+        raise ManagedOutputError('trusted monotonic clock required')
+
+    def inspect(candidate):
+        inspect_identity(candidate)
+        try:
+            observed = audit_source()
+            now = clock()
+        except Exception as exc:
+            raise ManagedOutputError('host audit observation unavailable') from exc
+        if (type(observed) is not HostAuditObservation
+                or type(observed.status) is not str or observed.status != 'pass'
+                or type(observed.revoked) is not bool or observed.revoked):
+            raise ManagedOutputError('host audit observation unknown or revoked')
+        timestamp = observed.observed_monotonic
+        if (type(timestamp) not in (int, float) or not math.isfinite(timestamp)
+                or type(now) not in (int, float) or not math.isfinite(now)):
+            raise ManagedOutputError('invalid audit observation time')
+        age = now - timestamp
+        if age < 0 or age > max_age_seconds:
+            raise ManagedOutputError('host audit observation expired or future-dated')
+        return None  # Evidence check only, no path, fd, or write authority.
 
     return inspect

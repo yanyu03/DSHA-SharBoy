@@ -3,9 +3,11 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
 from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions, bind_host_registration_identity, bind_host_audit_source
+from scripts.kdi_scribe_output import HostAuditObservation, bind_host_audit_observation_source
 
 
 class ManagedOutputTests(unittest.TestCase):
@@ -339,6 +341,45 @@ class ManagedOutputTests(unittest.TestCase):
             bind_host_audit_source(token, unavailable)(token)
         with self.assertRaises(ManagedOutputError):
             bind_host_audit_source(token, None)
+
+
+    def test_host_audit_observation_immutable_and_fresh(self):
+        """A fresh host observation is evidence only; caller cannot select it."""
+        token = object()
+        observation = HostAuditObservation('pass', 99.5, False)
+        with self.assertRaises(FrozenInstanceError):
+            observation.status = 'fail'
+        check = bind_host_audit_observation_source(
+            token, lambda: observation, max_age_seconds=1.0, clock=lambda: 100.0)
+        self.assertIsNone(check(token))
+        with self.assertRaises(ManagedOutputError):
+            check(object())
+
+    def test_host_audit_observation_unknown_expired_revoked_refused(self):
+        """Unknown, stale, future, revoked, malformed and forged observations fail closed."""
+        token = object()
+        observations = (
+            HostAuditObservation('unknown', 99.5, False),
+            HostAuditObservation('fail', 99.5, False),
+            HostAuditObservation('pass', 98.0, False),
+            HostAuditObservation('pass', 100.1, False),
+            HostAuditObservation('pass', 99.5, True),
+            HostAuditObservation('pass', 99.5, 'false'),
+            HostAuditObservation('pass', float('nan'), False),
+            True, {'status': 'pass'}, None,
+        )
+        for observation in observations:
+            with self.subTest(observation=repr(observation)), self.assertRaises(ManagedOutputError):
+                bind_host_audit_observation_source(
+                    token, lambda: observation, max_age_seconds=1.0, clock=lambda: 100.0)(token)
+        for max_age in (None, False, 0, -1, float('nan'), float('inf')):
+            with self.subTest(max_age=repr(max_age)), self.assertRaises(ManagedOutputError):
+                bind_host_audit_observation_source(
+                    token, lambda: None, max_age_seconds=max_age)
+        with self.assertRaises(ManagedOutputError):
+            bind_host_audit_observation_source(
+                token, lambda: HostAuditObservation('pass', 99.5, False),
+                max_age_seconds=1.0, clock=lambda: float('nan'))(token)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
