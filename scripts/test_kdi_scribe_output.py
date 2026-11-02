@@ -183,5 +183,31 @@ class ManagedOutputTests(unittest.TestCase):
             self.assertFalse((root / 'incident.md').exists())
 
 
+    @unittest.skipUnless(
+        os.name == 'posix' and all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW', 'O_EXCL')),
+        'POSIX directory fd only',
+    )
+    def test_attacker_writable_ancestor_is_not_rejected_yet(self):
+        """Known unsafe baseline: a world-writable parent is accepted.
+
+        This reproduces the missing host-registration trust gate, not a
+        containment PASS. Mode bits alone cannot prove effective permissions
+        (ACLs, groups, namespaces and privileged actors remain unassessed).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            attacker_writable = Path(tmp) / 'attacker_writable'
+            attacker_writable.mkdir()
+            os.chmod(attacker_writable, 0o777)
+            root = attacker_writable / 'exports'
+            root.mkdir()
+            self.assertTrue(attacker_writable.stat().st_mode & 0o002)
+            with open_managed_output(root, 'incident.md') as stream:
+                stream.write('untrusted-parent')
+            self.assertEqual(
+                (root / 'incident.md').read_text(encoding='utf-8'),
+                'untrusted-parent',
+            )
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
