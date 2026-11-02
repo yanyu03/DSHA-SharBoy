@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions
+from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions, bind_host_registration_identity
 
 
 class ManagedOutputTests(unittest.TestCase):
@@ -279,6 +279,29 @@ class ManagedOutputTests(unittest.TestCase):
                 (root / 'incident.md').read_text(encoding='utf-8'),
                 'caller-controlled-root',
             )
+
+
+    def test_host_bound_registration_identity_rejects_forgery(self):
+        """Identity precheck refuses caller claims; it does not authorize IO."""
+        class ForgedRegistration(os.PathLike):
+            issuer = 'trusted-bootstrap'
+            effective_rights_audit = {'verdict': 'PASS'}
+
+            def __fspath__(self):
+                return '/forged/export/root'
+
+        host_token = object()
+        inspect = bind_host_registration_identity(host_token)
+        for candidate in (ForgedRegistration(), {'issuer': 'trusted-bootstrap'},
+                          object(), None, '/forged/export/root'):
+            with self.subTest(candidate=type(candidate).__name__):
+                with self.assertRaises(ManagedOutputError):
+                    inspect(candidate)
+        for invalid in (None, ForgedRegistration(), 'trusted-bootstrap', {}):
+            with self.subTest(invalid=type(invalid).__name__):
+                with self.assertRaises(ManagedOutputError):
+                    bind_host_registration_identity(invalid)
+        self.assertIsNone(inspect(host_token))  # Identity only, NOT write authority.
 
 
 if __name__ == '__main__':

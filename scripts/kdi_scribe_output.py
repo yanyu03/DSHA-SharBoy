@@ -113,3 +113,23 @@ def inspect_posix_root_mode_preconditions(trusted_root, *, approved_owner_uids):
     finally:
         if fd is not None:
             os.close(fd)
+
+def bind_host_registration_identity(host_token):
+    """Bind an opaque identity check at trusted bootstrap time (isolated only).
+
+    The trusted host must retain the returned checker and must never allow a
+    model-controlled request to select its host_token or replace the checker.
+    Matching identity is NOT a permission grant: effective-rights auditing,
+    root-handle identity, and parent/mount stability remain unimplemented.
+    Arbitrary Python executing in this interpreter is outside this boundary.
+    """
+    if type(host_token) is not object:
+        raise ManagedOutputError('opaque host token required')
+
+    def inspect(candidate):
+        if candidate is not host_token:
+            raise ManagedOutputError('caller registration is not host-bound')
+        # Deliberately return no authority, path, fd, or write capability.
+        return None
+
+    return inspect
