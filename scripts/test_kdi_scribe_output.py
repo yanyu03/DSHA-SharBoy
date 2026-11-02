@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output
+from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions
 
 
 class ManagedOutputTests(unittest.TestCase):
@@ -207,6 +207,44 @@ class ManagedOutputTests(unittest.TestCase):
                 (root / 'incident.md').read_text(encoding='utf-8'),
                 'untrusted-parent',
             )
+
+
+    @unittest.skipUnless(
+        os.name == 'posix' and all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW')),
+        'POSIX registration preflight only',
+    )
+    def test_registration_preflight_rejects_writable_ancestor(self):
+        """An unsafe ancestor is rejected without creating any output."""
+        with tempfile.TemporaryDirectory() as tmp:
+            attacker = Path(tmp) / 'attacker_writable'
+            attacker.mkdir()
+            os.chmod(attacker, 0o777)
+            root = attacker / 'exports'
+            root.mkdir()
+            owners = {os.stat('/').st_uid, os.geteuid(), root.stat().st_uid}
+            with self.assertRaises(ManagedOutputError):
+                inspect_posix_root_mode_preconditions(root, approved_owner_uids=owners)
+            self.assertFalse((root / 'incident.md').exists())
+
+    @unittest.skipUnless(
+        os.name == 'posix' and all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW')),
+        'POSIX registration preflight only',
+    )
+    def test_registration_preflight_requires_explicit_owner_policy(self):
+        for owners in (None, (), [], ['0'], {True}, {-1}):
+            with self.subTest(owners=repr(owners)), self.assertRaises(ManagedOutputError):
+                inspect_posix_root_mode_preconditions('/', approved_owner_uids=owners)
+
+    @unittest.skipUnless(
+        os.name == 'posix' and all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW')),
+        'POSIX registration preflight only',
+    )
+    def test_registration_preflight_returns_evidence_not_authority(self):
+        """The mode-only check returns inode evidence, not a trust grant."""
+        root_owner = os.stat('/').st_uid
+        evidence = inspect_posix_root_mode_preconditions('/', approved_owner_uids={root_owner})
+        self.assertEqual(len(evidence), 1)
+        self.assertEqual(evidence[0][2], root_owner)
 
 
 if __name__ == '__main__':

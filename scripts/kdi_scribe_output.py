@@ -5,6 +5,7 @@ cannot authenticate that configuration or constrain standalone Scribe.
 """
 
 import os
+import stat
 from pathlib import Path
 
 
@@ -67,3 +68,48 @@ def open_managed_output(trusted_root, relative_name):
     finally:
         if dir_fd is not None:
             os.close(dir_fd)
+
+
+def inspect_posix_root_mode_preconditions(trusted_root, *, approved_owner_uids):
+    """Collect POSIX ancestor mode evidence; NEVER authorize managed writes.
+
+    Reject obviously mutable or unapproved-owner ancestors. This necessary
+    preflight does not audit ACLs, groups, capabilities, mount topology or
+    concurrent renames. A separate trusted-host registration and effective-
+    rights audit are required before any managed-output authorization.
+    """
+    required = ('O_DIRECTORY', 'O_NOFOLLOW')
+    if os.name != 'posix' or any(not hasattr(os, flag) for flag in required):
+        raise ManagedOutputError('POSIX registration preflight unavailable')
+    if not isinstance(trusted_root, (str, os.PathLike)):
+        raise ManagedOutputError('trusted absolute root required')
+    root = Path(trusted_root)
+    if not root.is_absolute() or '..' in root.parts:
+        raise ManagedOutputError('trusted absolute root required')
+    if not isinstance(approved_owner_uids, (tuple, list, set, frozenset)) or not approved_owner_uids:
+        raise ManagedOutputError('explicit approved owner IDs required')
+    if any(type(uid) is not int or uid < 0 for uid in approved_owner_uids):
+        raise ManagedOutputError('invalid approved owner ID')
+
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    fd = None
+    evidence = []
+    try:
+        fd = os.open('/', flags)
+        for component in (None, *root.parts[1:]):
+            if component is not None:
+                next_fd = os.open(component, flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            info = os.fstat(fd)
+            if (not stat.S_ISDIR(info.st_mode)
+                    or info.st_uid not in approved_owner_uids
+                    or info.st_mode & 0o022):
+                raise ManagedOutputError('untrusted ancestor mode or owner')
+            evidence.append((info.st_dev, info.st_ino, info.st_uid, stat.S_IMODE(info.st_mode)))
+        return tuple(evidence)
+    except OSError as exc:
+        raise ManagedOutputError('registration mode preflight refused') from exc
+    finally:
+        if fd is not None:
+            os.close(fd)
