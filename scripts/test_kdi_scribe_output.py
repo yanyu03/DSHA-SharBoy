@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions, bind_host_registration_identity, bind_host_audit_source
 from scripts.kdi_scribe_output import HostAuditObservation, bind_host_audit_observation_source
+from scripts.kdi_scribe_output import HostRegistrationObservation, bind_host_registration_observation_source
 
 
 class ManagedOutputTests(unittest.TestCase):
@@ -380,6 +381,61 @@ class ManagedOutputTests(unittest.TestCase):
             bind_host_audit_observation_source(
                 token, lambda: HostAuditObservation('pass', 99.5, False),
                 max_age_seconds=1.0, clock=lambda: float('nan'))(token)
+
+
+    def test_host_registration_observation_matches_bound_generation_and_root(self):
+        """A matching host record passes as evidence, never as write authority."""
+        token = object()
+        observation = HostRegistrationObservation(7, (101, 202), False)
+        with self.assertRaises(FrozenInstanceError):
+            observation.generation = 8
+        calls = []
+        check = bind_host_registration_observation_source(
+            token, lambda: calls.append('host') or observation,
+            expected_generation=7, expected_root_identity=(101, 202))
+        with self.assertRaises(ManagedOutputError):
+            check({'generation': 7, 'root_identity': (101, 202)})
+        self.assertEqual(calls, [])  # Forged caller cannot invoke the source.
+        self.assertIsNone(check(token))
+        self.assertEqual(calls, ['host'])
+
+    def test_host_registration_observation_mismatch_revocation_refused(self):
+        """Unknown, revoked, wrong generation/root and malformed records fail closed."""
+        token = object()
+        cases = (
+            HostRegistrationObservation(8, (101, 202), False),
+            HostRegistrationObservation(7, (101, 203), False),
+            HostRegistrationObservation(7, (101, 202), True),
+            HostRegistrationObservation(True, (101, 202), False),
+            HostRegistrationObservation(7, [101, 202], False),
+            HostRegistrationObservation(7, (101, -1), False),
+            HostRegistrationObservation(7, (101, 202), 0),
+            {'generation': 7, 'root_identity': (101, 202), 'revoked': False},
+            None,
+        )
+        for observed in cases:
+            with self.subTest(observed=repr(observed)), self.assertRaises(ManagedOutputError):
+                bind_host_registration_observation_source(
+                    token, lambda: observed,
+                    expected_generation=7, expected_root_identity=(101, 202))(token)
+        for generation, root in ((0, (101, 202)), (True, (101, 202)),
+                                 (7, (101,)), (7, (101, -1)), (7, [101, 202])):
+            with self.subTest(generation=generation, root=repr(root)):
+                with self.assertRaises(ManagedOutputError):
+                    bind_host_registration_observation_source(
+                        token, lambda: None, expected_generation=generation,
+                        expected_root_identity=root)
+        with self.assertRaises(ManagedOutputError):
+            bind_host_registration_observation_source(
+                token, None, expected_generation=7, expected_root_identity=(101, 202))
+
+        def unavailable():
+            raise RuntimeError('audit unavailable')
+
+        with self.assertRaises(ManagedOutputError):
+            bind_host_registration_observation_source(
+                token, unavailable, expected_generation=7,
+                expected_root_identity=(101, 202))(token)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

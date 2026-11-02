@@ -208,3 +208,48 @@ def bind_host_audit_observation_source(host_token, audit_source, *, max_age_seco
         return None  # Evidence check only, no path, fd, or write authority.
 
     return inspect
+
+@dataclass(frozen=True)
+class HostRegistrationObservation:
+    """Host-sourced registration generation and root identity; evidence only."""
+    generation: int
+    root_identity: tuple
+    revoked: bool
+
+
+def bind_host_registration_observation_source(
+        host_token, observation_source, *, expected_generation, expected_root_identity):
+    """Check host-bound generation and root identity, without granting writes.
+
+    The expected identity and source MUST be owned by trusted bootstrap.
+    This compares observations; it does not independently fstat an open root
+    handle, audit ACLs, or guarantee pathname/mount stability.
+    """
+    inspect_identity = bind_host_registration_identity(host_token)
+    if not callable(observation_source):
+        raise ManagedOutputError('trusted registration observation source required')
+    if type(expected_generation) is not int or expected_generation < 1:
+        raise ManagedOutputError('valid host registration generation required')
+    if (type(expected_root_identity) is not tuple or len(expected_root_identity) != 2
+            or any(type(value) is not int or value < 0 for value in expected_root_identity)):
+        raise ManagedOutputError('valid host root identity required')
+
+    def inspect(candidate):
+        inspect_identity(candidate)
+        try:
+            observed = observation_source()
+        except Exception as exc:
+            raise ManagedOutputError('host registration observation unavailable') from exc
+        if (type(observed) is not HostRegistrationObservation
+                or type(observed.revoked) is not bool or observed.revoked
+                or type(observed.generation) is not int
+                or observed.generation != expected_generation
+                or type(observed.root_identity) is not tuple
+                or len(observed.root_identity) != 2
+                or any(type(value) is not int or value < 0
+                       for value in observed.root_identity)
+                or observed.root_identity != expected_root_identity):
+            raise ManagedOutputError('host registration generation or root identity mismatch')
+        return None  # Evidence only, no write authority.
+
+    return inspect
