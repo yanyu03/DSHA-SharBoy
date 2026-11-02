@@ -28,6 +28,30 @@ The following **host-side trust preconditions are proposed, not enforced** by `s
 5. **Inode vs pathname.** A trusted pre-opened fd prevents subsequent name substitution from changing the fd's target, but cannot prevent the inode being moved elsewhere. Stable pathname containment additionally requires non-adversary-mutable ancestors and mount topology. A post-open string check does not repair TOCTOU. If the attacker can rename parents, alter mounts or act as the trusted service identity, pathname containment is unproven.
 6. **Windows remains unsupported.** POSIX owner/mode rules do not substitute for Windows ACL effective access, reparse-point/junction handling and verified native handle-relative opens. Continue rejecting Windows managed writes until a separate Windows design and tests pass.
 
+## Effective-rights audit and registration proof (design-only)
+
+This section defines the **next trust decision**, not a permission grant or a deployed verifier. The current `inspect_posix_root_mode_preconditions()` returns owner/mode evidence only; `open_managed_output()` does not consume that evidence. Neither function may claim effective-rights containment.
+
+**Authority separation.** A trusted host bootstrap, outside the model-controlled request path, owns a process-local `TrustedRootRegistration`. The model may supply only the relative output filename. The bootstrap selects a pre-opened root directory handle, approved service identity, trusted principal set, policy revision, and an independently audited enforcement environment. Never deserialize a registration, proof, root fd, allowed UID list, audit status or override from `DSHARequest`, `context`, argv, caller environment or working directory. A signature on caller-supplied JSON alone is not an authorization boundary.
+
+**Proposed evidence envelope (internal only, no protocol/schema changes):**
+
+| Evidence field | Requirement / reason |
+| --- | --- |
+| `registration_id`, `policy_revision`, `issuer` | Opaque process-local identity; issuer must be the trusted bootstrap, not the caller |
+| `root_handle`, `root_identity` | Pre-opened handle and `(st_dev, st_ino)` identity; never accept a pathname re-open as equivalent |
+| `ancestor_identities` | Ordered `(st_dev, st_ino, st_uid, st_mode)` observations from a trusted anchor; detect replacement, not rename safety |
+| `service_identity`, `trusted_principals` | Effective UID/GID, supplementary groups and explicitly authorized principals; account for privilege escalation |
+| `effective_rights_audit` | Named trusted audit backend, scope, observed ACL/default ACL, mutation-capable principals, verdict and evidence digest |
+| `mount_context`, `enforcement_claim` | Namespace/mount identity and independently enforced restrictions on rename, mount and identity changes |
+| `issued_at`, `validity_scope`, `revocation_state` | Limit evidence reuse to the registered process/handle and unchanged enforcement context; time alone cannot prevent races |
+
+**Registration decision:** return **REFUSE** unless every applicable ancestor and export directory has verifiable effective mutation rights limited to approved principals, the opened root identity matches the trusted registration, and the host can enforce the required stability of parent entries and mount topology for the entire open/write operation. An ACL or capability audit returning *unknown*, missing namespace visibility, unsupported filesystem semantics, a changed handle/identity, stale evidence, revocation or an untrusted issuer is **REFUSE**, not `mode-only PASS`. Do not treat `os.access()`, `st_mode`, `fstat()`, a short expiry, or an after-the-fact path comparison as sufficient.
+
+**Trust model limit:** if an adversary can act as an approved principal, modify an ancestor's directory entries, change the mount namespace, or race the trusted bootstrap, path-name containment is unproven. A host with no independently verified effective-rights auditor and enforcement mechanism must not issue an affirmative registration. A process-local proof is an audit artifact, **not** a cryptographic or OS sandbox guarantee.
+
+**Future isolated verification matrix:** positive issuance only with a controlled trusted host and enforceable parent stability; negative tests for forged caller proof, unknown ACL backend, group/ACL write access, root inode substitution, namespace/mount changes, expired/revoked evidence and root rename after registration. Windows continues fail-closed until a separate native ACL/handle implementation is verified. Do not connect to production Scribe, Router or Gate on the strength of this document.
+
 **Required later tests (not run here):** positive trusted-parent registration; rejection of attacker-writable parents, substituted root identities and untrusted registry inputs; preservation of existing root-rename/replacement reproductions as known failing security boundaries; Linux and Windows regression before production integration. Passing a vulnerability-reproduction test is **not** passing the containment requirement.
 
 ## Proposed validation contract (not implemented)
