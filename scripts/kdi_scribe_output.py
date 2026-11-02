@@ -133,3 +133,27 @@ def bind_host_registration_identity(host_token):
         return None
 
     return inspect
+
+def bind_host_audit_source(host_token, audit_source):
+    """Bind a bootstrap-selected zero-argument audit source (isolated only).
+
+    A True observation is NOT a permission grant. No real ACL, namespace or
+    directory-stability audit is implemented; only the source binding is tested.
+    The caller cannot select a backend through inspect(candidate). Arbitrary
+    Python in the trusted interpreter remains outside this boundary.
+    """
+    inspect_identity = bind_host_registration_identity(host_token)
+    if not callable(audit_source):
+        raise ManagedOutputError('trusted audit source callable required')
+
+    def inspect(candidate):
+        inspect_identity(candidate)
+        try:
+            observed = audit_source()
+        except Exception as exc:
+            raise ManagedOutputError('host audit unavailable') from exc
+        if observed is not True:
+            raise ManagedOutputError('host audit incomplete or refused')
+        return None  # Evidence only, never a write capability.
+
+    return inspect

@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions, bind_host_registration_identity
+from scripts.kdi_scribe_output import ManagedOutputError, open_managed_output, validate_relative_output, inspect_posix_root_mode_preconditions, bind_host_registration_identity, bind_host_audit_source
 
 
 class ManagedOutputTests(unittest.TestCase):
@@ -303,6 +303,42 @@ class ManagedOutputTests(unittest.TestCase):
                     bind_host_registration_identity(invalid)
         self.assertIsNone(inspect(host_token))  # Identity only, NOT write authority.
 
+
+    def test_host_audit_source_cannot_be_selected_by_caller(self):
+        """Caller claims never select the host's captured audit backend."""
+        token = object()
+        calls = []
+        check = bind_host_audit_source(token, lambda: calls.append('host') or True)
+
+        class Forged:
+            verdict = 'PASS'
+            audit_source = lambda self: self.fail_if_called()
+
+            def fail_if_called(self):
+                raise AssertionError('forged source must not execute')
+
+        for candidate in (Forged(), {'verdict': 'PASS'}, object(), None, 'PASS'):
+            with self.subTest(candidate=type(candidate).__name__):
+                with self.assertRaises(ManagedOutputError):
+                    check(candidate)
+        self.assertEqual(calls, [])
+        self.assertIsNone(check(token))  # Test double only, never a write grant.
+        self.assertEqual(calls, ['host'])
+
+    def test_host_audit_source_unknown_or_error_fails_closed(self):
+        """An unavailable or non-exact audit result must not pass."""
+        token = object()
+        for response in (None, False, 'PASS', 1, {}):
+            with self.subTest(response=repr(response)), self.assertRaises(ManagedOutputError):
+                bind_host_audit_source(token, lambda: response)(token)
+
+        def unavailable():
+            raise RuntimeError('backend unavailable')
+
+        with self.assertRaises(ManagedOutputError):
+            bind_host_audit_source(token, unavailable)(token)
+        with self.assertRaises(ManagedOutputError):
+            bind_host_audit_source(token, None)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
