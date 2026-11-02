@@ -247,5 +247,39 @@ class ManagedOutputTests(unittest.TestCase):
         self.assertEqual(evidence[0][2], root_owner)
 
 
+    @unittest.skipUnless(
+        os.name == 'posix' and all(hasattr(os, flag) for flag in ('O_DIRECTORY', 'O_NOFOLLOW', 'O_EXCL')),
+        'POSIX managed-open reproduction only',
+    )
+    def test_forged_caller_registration_pathlike_currently_accepted(self):
+        """Known unsafe trust boundary: caller's PathLike is not host registration.
+
+        A forged issuer/audit claim on a path-like root is ignored; the isolated
+        open helper still creates a file. This is a vulnerability reproduction,
+        NOT an authorization PASS or a production exploit demonstration.
+        All effects stay inside a disposable temporary directory.
+        """
+        class ForgedRegistration(os.PathLike):
+            def __init__(self, root):
+                self.root = root
+                self.issuer = 'trusted-bootstrap'
+                self.effective_rights_audit = {'verdict': 'PASS'}
+                self.revocation_state = 'active'
+
+            def __fspath__(self):
+                return os.fspath(self.root)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / 'exports'
+            root.mkdir()
+            forged = ForgedRegistration(root)
+            with open_managed_output(forged, 'incident.md') as stream:
+                stream.write('caller-controlled-root')
+            self.assertEqual(
+                (root / 'incident.md').read_text(encoding='utf-8'),
+                'caller-controlled-root',
+            )
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
