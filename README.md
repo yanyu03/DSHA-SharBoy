@@ -1,6 +1,7 @@
 # DSHA-SharBoy V1.0
 
 [![M8ven Verified](https://m8ven.ai/badge/mcp/yanyu03-dsha-sharboy-15lh87?variant=verified&v=fe0ed7c301ee9a50769f65a7304e7d81)](https://m8ven.ai/mcp/yanyu03-dsha-sharboy-15lh87?s=readme)
+[![M8ven Verified](https://m8ven.ai/badge/mcp/yanyu03/dsha-sharboy?variant=verified)](https://m8ven.ai/mcp/yanyu03/dsha-sharboy?s=readme)
 
 > 欢迎收录、测试和反馈！请通过 [GitHub Issues](https://github.com/yanyu03/DSHA-SharBoy/issues) 提供可复现的问题与建议；我们会尽力持续完善 DSHA。
 
