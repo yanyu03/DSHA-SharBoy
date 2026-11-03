@@ -253,3 +253,32 @@ def bind_host_registration_observation_source(
         return None  # Evidence only, no write authority.
 
     return inspect
+
+
+def bind_host_root_fd_identity_source(host_token, root_fd, *, expected_root_identity):
+    """Compare a host-held POSIX directory fd against pinned identity; evidence only.
+
+    Does not establish pathname/ancestor/mount stability or grant write access.
+    The trusted bootstrap must retain control of both the fd and the checker.
+    """
+    inspect_identity = bind_host_registration_identity(host_token)
+    if os.name != 'posix' or not hasattr(os, 'O_DIRECTORY'):
+        raise ManagedOutputError('POSIX directory fd unavailable')
+    if type(root_fd) is not int or root_fd < 0:
+        raise ManagedOutputError('host directory fd required')
+    if (type(expected_root_identity) is not tuple or len(expected_root_identity) != 2
+            or any(type(v) is not int or v < 0 for v in expected_root_identity)):
+        raise ManagedOutputError('valid root identity required')
+
+    def inspect(candidate):
+        inspect_identity(candidate)
+        try:
+            info = os.fstat(root_fd)
+        except OSError as exc:
+            raise ManagedOutputError('host directory fd unavailable') from exc
+        if (not stat.S_ISDIR(info.st_mode)
+                or (info.st_dev, info.st_ino) != expected_root_identity):
+            raise ManagedOutputError('host directory fd identity mismatch')
+        return None  # Never a path, handle, or write capability.
+
+    return inspect

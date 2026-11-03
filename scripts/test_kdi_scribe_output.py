@@ -437,5 +437,45 @@ class ManagedOutputTests(unittest.TestCase):
                 token, unavailable, expected_generation=7,
                 expected_root_identity=(101, 202))(token)
 
+
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_DIRECTORY'),
+                         'POSIX directory fd only')
+    def test_host_root_fd_identity_accepts_only_pinned_directory(self):
+        from scripts.kdi_scribe_output import bind_host_root_fd_identity_source
+        with tempfile.TemporaryDirectory() as tmp:
+            fd = os.open(tmp, os.O_RDONLY | os.O_DIRECTORY)
+            token = object()
+            try:
+                info = os.fstat(fd)
+                identity = (info.st_dev, info.st_ino)
+                check = bind_host_root_fd_identity_source(
+                    token, fd, expected_root_identity=identity)
+                self.assertIsNone(check(token))
+                with self.assertRaises(ManagedOutputError):
+                    check(object())
+                with self.assertRaises(ManagedOutputError):
+                    bind_host_root_fd_identity_source(
+                        token, fd, expected_root_identity=(info.st_dev, info.st_ino + 1))(token)
+            finally:
+                os.close(fd)
+            with self.assertRaises(ManagedOutputError):
+                check(token)
+
+    @unittest.skipUnless(os.name == 'posix' and hasattr(os, 'O_DIRECTORY'),
+                         'POSIX directory fd only')
+    def test_host_root_fd_identity_rejects_nondirectory_and_invalid_fd(self):
+        from scripts.kdi_scribe_output import bind_host_root_fd_identity_source
+        token = object()
+        with tempfile.TemporaryFile() as file:
+            fd = file.fileno()
+            info = os.fstat(fd)
+            with self.assertRaises(ManagedOutputError):
+                bind_host_root_fd_identity_source(
+                    token, fd, expected_root_identity=(info.st_dev, info.st_ino))(token)
+        for invalid in (None, True, -1, '3'):
+            with self.subTest(fd=invalid), self.assertRaises(ManagedOutputError):
+                bind_host_root_fd_identity_source(
+                    token, invalid, expected_root_identity=(1, 2))
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)
