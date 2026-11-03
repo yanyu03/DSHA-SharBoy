@@ -1,0 +1,45 @@
+name: Publish Kaeru V1.1
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-v1.1.yml'
+permissions:
+  contents: write
+jobs:
+  publish:
+    if: github.repository == 'yanyu03/DSHA-SharBoy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check release identity and guard against duplicate tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "main" || test "$GITHUB_REF_NAME" = "main"
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/V1.1" >/dev/null 2>&1; then
+            echo "V1.1 already exists: stop without moving the tag"
+            exit 1
+          fi
+          test -f docs/releases/V1.1.md
+      - name: Verify selective Kaeru regression tests
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_kaeru_router_safety.py' -v
+          python3 -m unittest discover -s scripts -p 'test_kdi_rea_dependency_security.py' -v
+      - name: Publish V1.1 from verified main commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag V1.1 "$GITHUB_SHA"
+          git push origin refs/tags/V1.1
+          gh release create V1.1 --repo "$GITHUB_REPOSITORY" --title "DSHA-SharBoy V1.1 — Kaeru 稳定版更新" --notes-file docs/releases/V1.1.md --verify-tag
