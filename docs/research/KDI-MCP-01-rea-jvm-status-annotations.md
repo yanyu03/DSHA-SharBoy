@@ -82,3 +82,22 @@ Locate the exact versioned `io.modelcontextprotocol.kotlin.sdk.types.Tool` and `
 **Build artifact blocker:** This execution environment could not resolve `repo.maven.apache.org` (DNS lookup failed). No version-matched SDK JAR was retrieved, no digest or `javap` signature was verified, and no Java bridge compilation was attempted. Do not treat source declarations as a substitute for JVM ABI proof. This is an environment/network blocker, not a failed test of the code.
 
 **Checks:** source declarations and intended nested JSON field path PASS (static); artifact provenance, JVM ABI, actual `tools/list` payload, bridge compilation, runtime/error-path, Python/Windows/Linux regression SKIP. **Merge/release BLOCKED.** Next: obtain the version-pinned JVM artifact via an accessible trusted source, verify its checksum and constructor with `javap`, compile the unmodified Java bridge, then capture real `tools/list`. Do not add guessed hints or weaken Gate. **Rollback:** revert this documentation-only commit after checking the latest branch SHA; `main` and `v1.2.0-std` remain untouched.
+
+
+## Follow-up checkpoint — upstream v0.7.1 release artifact provenance (2026-11-04)
+
+**Pre-write remote heads:** `main=5ef66ae6bd001b5038dd743ae9b9b1e7d6d30a4b`, `fatfish=a8de8cd7bcc6cd2043461cd29a3dc38e89224a9b`. PR [#6](https://github.com/yanyu03/DSHA-SharBoy/pull/6) remains open/Draft, `mergeable=false`, `mergeable_state=dirty`; its returned base SHA `e24abe7d4e7fa6a82967af8972de0e11bf6cf5d4` differs from the independently fetched current main ref. Do not treat stale PR metadata as proof of an up-to-date merge base. The current Fatfish commit status endpoint returned no status contexts (`pending`); the latest observed successful workflow run was for older SHA `123fd05e...`, not current HEAD.
+
+**New verified provenance:** GitHub's [upstream v0.7.1 Release API](https://api.github.com/repos/1013503897/jadx-headless-mcp/releases/tags/v0.7.1) lists the following assets, published 2026-09-18 06:16:12 UTC:
+
+| Release asset | Reported size | GitHub asset digest (SHA-256) |
+| --- | ---: | --- |
+| [jadx-headless-mcp-0.7.1-all.jar](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar) | 42,619,858 bytes | `6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75` |
+| [jadx-headless-mcp-0.7.1.zip](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1.zip) | 39,114,881 bytes | `f7246667a35de234d20f5503b8593462b8003eb9a23830e4fb6f53d9f12b5e6d` |
+| [jadx-headless-mcp.sha256](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp.sha256) | 98 bytes | `e50e16d97c5892805b7c279ca9fbd41b0468ea43af13b7e4691b179f30d0f93b` |
+
+These are **publisher-hosted GitHub asset metadata digests**, not hashes independently calculated from downloaded bytes, nor a signature attesting to trust. No binary was downloaded, compiled, executed, or linked to a user's local JAR in this iteration. The SHA-256 of the checksum *file* is not the checksum value inside that file.
+
+**Next independent verification:** download the specific JAR in a controlled build environment, calculate `sha256sum jadx-headless-mcp-0.7.1-all.jar` (or Windows `Get-FileHash -Algorithm SHA256`), compare with the digest above, inspect embedded `Tool`/`ToolAnnotations` using `javap`, compile the unmodified REA bridge against that exact artifact, then capture the Java bridge's actual `tools/list`. Do not infer ABI compatibility merely from upstream Gradle source.
+
+**Gates:** release asset metadata and digest provenance PASS; independently hashed artifact, ABI, bridge compilation, MCP runtime, Python/Windows/Linux regression SKIP. PR merge/release BLOCKED. **Rollback:** revert only this documentation update on fatfish. No code, protocol, Gate, main, tags, or other branches modified.
