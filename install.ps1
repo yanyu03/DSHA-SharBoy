@@ -26,6 +26,11 @@ $bak   = Join-Path $cfg "_rollback\DSHA_$stamp"
 function Say($m){ Write-Host "[DSHA] $m" }
 function Step($m){ Write-Host "`n=== $m ===" -ForegroundColor Cyan }
 
+# Refuse ambiguous flags BEFORE the uninstall branch can touch any files.
+if ($WhatIfOnly -and $Uninstall) {
+  throw "不能同时指定 -WhatIfOnly 与 -Uninstall：卸载会修改文件，请单独执行"
+}
+
 # ---------------------------------------------------------------- 卸载
 if ($Uninstall) {
   Step "卸载"

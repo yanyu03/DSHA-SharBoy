@@ -18,6 +18,9 @@ class PublicLaunchContracts(unittest.TestCase):
     def test_dry_run_before_any_write_and_prior_tier_snapshot(self):
         script = (ROOT / "install.ps1").read_text(encoding="utf-8-sig")
         dry = script.index("if ($WhatIfOnly) {")
+        guard = script.index("if ($WhatIfOnly -and $Uninstall) {")
+        uninstall = script.index("if ($Uninstall) {")
+        self.assertLess(guard, uninstall)
         write = script.index('New-Item -ItemType Directory -Force -Path "$bak')
         self.assertLess(dry, write)
         prior = script.index("$previousTier = $null")

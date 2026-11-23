@@ -6,9 +6,10 @@
 
 1. 阅读仓库 [README](../README.md)、[安装教程](../安装教程.md) 和 [全权风险说明](../默认全权警告.md)，确认目标宿主为 Windows Antigravity + Python 3.10+；不要在生产机或含敏感凭据的宿主直接试验。
 2. 先只读检查，并确认将会改动的路径。主分支已修复 `-WhatIfOnly` 在退出前创建配置目录的问题。
-3. 明确选择本地插件 `read-only` 档位，安装后运行体检。
-4. **单独核对原生宿主权限**。插件的 `tier.json` 和 `hooks.json` 无法证明 Antigravity 的原生 `autoExecutionPolicy`、`internetAccessPolicy` 等选项已同步。
-5. 阅读切档警告、接受可能中断/重启宿主后，才运行 `agy-tier.ps1 ... -Yes`。执行后再次读取状态，观察是否存在项目级覆盖配置。
+3. 不要组合 `-WhatIfOnly` 与 `-Uninstall`；安装器会拒绝这个有歧义的组合，以免预演时误卸载。
+4. 明确选择本地插件 `read-only` 档位，安装后运行体检。
+5. **单独核对原生宿主权限**。插件的 `tier.json` 和 `hooks.json` 无法证明 Antigravity 的原生 `autoExecutionPolicy`、`internetAccessPolicy` 等选项已同步。
+6. 阅读切档警告、接受可能中断/重启宿主后，才运行 `agy-tier.ps1 ... -Yes`。执行后再次读取状态，观察是否存在项目级覆盖配置。
 
 ```powershell
 git clone https://github.com/yanyu03/DSHA-SharBoy.git
