@@ -1,6 +1,6 @@
 ﻿# DSHA 安装器（幂等 · 带备份 · 可回滚）
 #
-#   pwsh -File install.ps1                      # 安装（权限档位 + 工程锁，钩子保持关闭）
+#   pwsh -File install.ps1                      # 插件默认 read-only；原生宿主权限须另行同步
 #   pwsh -File install.ps1 -EnableHook          # 同时启用工程锁钩子（写类工具机械校验）
 #   pwsh -File install.ps1 -Strict              # 工程锁置严格模式（L5/L6/L9.1 直接拒绝）
 #   pwsh -File install.ps1 -WhatIfOnly          # 只检查环境与将要做的动作，不改任何文件
@@ -8,7 +8,8 @@
 
 [CmdletBinding()]
 param(
-  [string]$Tier = 'danger-full-access',   # 出厂默认：全权（见 默认全权警告.md）
+  [ValidateSet('read-only', 'workspace-write', 'danger-full-access', 'auto')]
+  [string]$Tier = 'read-only',        # 对新用户采用保守的插件档位；不代表原生宿主已同步
   [switch]$KeepTier,                      # 保留现有档位，不覆盖
   [switch]$EnableHook,
   [switch]$Strict,
@@ -92,8 +93,7 @@ Say "Python：$pyExe （$pyVer）"
 
 $agDir = Join-Path $env:LOCALAPPDATA 'Programs\antigravity'
 if (Test-Path $agDir) { Say "Antigravity：已安装（$agDir）" } else { Say "⚠ 未在默认路径找到 Antigravity；若装在别处，本插件仍可用，只是档位切换脚本的重启路径需自行确认。" }
-if (-not (Test-Path $cfg)) { New-Item -ItemType Directory -Force -Path $cfg | Out-Null }
-
+# -WhatIfOnly must exit before ANY write, including creating ~/.gemini/config.
 if ($WhatIfOnly) {
   Say "— WhatIfOnly：以下动作将被执行（本次不改动任何文件）"
   Say "  备份到：$bak"
@@ -101,9 +101,25 @@ if ($WhatIfOnly) {
   Say "  复制 skills\DSHA          → $cfg\skills\DSHA"
   Say "  复制 bin\agy-*.ps1        → $cfg\"
   Say "  用 $pyExe 重写 run-gate.cmd / englock.cmd（消除硬编码路径）"
-  Say "  钩子：$(if($EnableHook){'启用'}else{'保持现状'})｜工程锁模式：$(if($Strict){'strict'}else{'advisory'})"
+  Say "  请求的插件档位：$Tier；-KeepTier 将在安装时优先保留已有档位（若存在）"
+  Say "  注意：预演不会修改原生宿主设置；正式安装也不会自动切换 Antigravity 原生权限"
+  Say "  工程锁模式：$(if($Strict){'strict'}else{'advisory'})；-EnableHook=$(if($EnableHook){'on'}else{'off'})"
   exit 0
 }
+
+# Capture the current tier BEFORE robocopy overwrites the installed template.
+$previousTier = $null
+$priorTierPath = Join-Path $cfg 'plugins\dsh-permissions\tier.json'
+if ($KeepTier -and (Test-Path -LiteralPath $priorTierPath)) {
+  try {
+    $candidate = (Get-Content -LiteralPath $priorTierPath -Raw -Encoding utf8 | ConvertFrom-Json).tier
+    if (@('read-only','workspace-write','danger-full-access','auto') -notcontains $candidate) {
+      throw "unsupported saved tier: $candidate"
+    }
+    $previousTier = $candidate
+  } catch { throw "无法保留当前权限档位；现有 tier.json 无效：$_" }
+}
+$effectiveTier = if ($null -ne $previousTier) { $previousTier } else { $Tier }
 
 # ---------------------------------------------------------------- 1. 备份
 Step "1/6 备份现有配置"
@@ -224,25 +240,21 @@ $mode = if ($Strict) { 'strict' } else { 'advisory' }
   ConvertTo-Json -Depth 4 | Set-Content -Encoding utf8 "$cfg\plugins\dsh-permissions\englock.json"
 Say "工程锁模式：$mode"
 
-# 权限档位（出厂默认 = 全权）
+# Plugin tier state (host native permissions are NOT synchronized here).
 $tierFile = "$cfg\plugins\dsh-permissions\tier.json"
-if ($KeepTier -and (Test-Path $tierFile)) {
-  Say "权限档位：保留现有设置（-KeepTier）"
-} else {
-  @{ tier = $Tier; auto_reviewer = 'local'; audit_logging = $true; log_allow = $false } |
-    ConvertTo-Json | Set-Content -Encoding utf8 $tierFile
-  Say "权限档位：$Tier"
-}
-if ($Tier -eq 'danger-full-access' -and -not $KeepTier) {
+@{ tier = $effectiveTier; auto_reviewer = 'local'; audit_logging = $true; log_allow = $false } |
+  ConvertTo-Json | Set-Content -Encoding utf8 $tierFile
+Say "插件权限档位：$effectiveTier $(if ($null -ne $previousTier) {'(-KeepTier preserved)'} else {''})"
+if ($effectiveTier -eq 'danger-full-access') {
   Write-Host ""
   Write-Host "  ============================================================" -ForegroundColor Yellow
-  Write-Host "   ⚠  DSHA 出厂默认档位 = danger-full-access（全权）" -ForegroundColor Yellow
+  Write-Host "   ⚠  你已显式选择或保留 danger-full-access（全权）" -ForegroundColor Yellow
   Write-Host "  ============================================================" -ForegroundColor Yellow
   Write-Host "   · 终端命令不再有任何拦截；工作区外与联网全部 ALLOW；不弹审批" -ForegroundColor Yellow
   Write-Host "   · 没有沙箱、没有模型审查，兜底的只有你自己" -ForegroundColor Yellow
-  Write-Host "   · 这不是疏漏，是刻意的默认值：详见 默认全权警告.md" -ForegroundColor Yellow
+  Write-Host "   · 全权不再是新安装的默认值：详见 默认全权警告.md" -ForegroundColor Yellow
   Write-Host "   · 想立刻降档： agy-tier.ps1 read-only -Yes   （即时生效）" -ForegroundColor Yellow
-  Write-Host "   · 想换默认安装： .\install.ps1 -Tier workspace-write" -ForegroundColor Yellow
+  Write-Host "   · 想改为保守插件档位： .\install.ps1 -Tier read-only" -ForegroundColor Yellow
   Write-Host "   · 想保留现有档位： .\install.ps1 -KeepTier" -ForegroundColor Yellow
   Write-Host "  ============================================================" -ForegroundColor Yellow
   Write-Host ""
@@ -254,7 +266,7 @@ $gateCmd = Join-Path $pScripts 'run-gate.cmd'
 # workspace-write / danger-full-access 由原生开关承担（关）。别和 agy-tier.ps1 抢所有权。
 $curTier = if (Test-Path "$cfg\plugins\dsh-permissions\tier.json") {
   (Get-Content "$cfg\plugins\dsh-permissions\tier.json" -Raw -Encoding utf8 | ConvertFrom-Json).tier
-} else { 'danger-full-access' }
+} else { 'read-only' }
 $gateOn = ($curTier -eq 'read-only' -or $curTier -eq 'auto')
 $gateHooks = [ordered]@{
   'dsh-permissions' = [ordered]@{
@@ -266,7 +278,7 @@ $gateHooks = [ordered]@{
   }
 }
 $gateHooks | ConvertTo-Json -Depth 6 | Set-Content -Encoding utf8 "$cfg\plugins\dsh-permissions\hooks.json"
-Say "权限钩子：enabled=$([bool]$gateOn)（档位 $curTier 决定，归 agy-tier.ps1 所有）"
+Say "权限钩子：enabled=$([bool]$gateOn)（插件档位 $curTier；不是原生设置的证明）"
 
 # 独立工程锁插件：不寄生在 dsh-permissions —— agy-tier.ps1 每次切档都会重写那个目录的
 # hooks.json（全权档会关掉钩子），工程锁一旦寄生，换个档位就失效。
@@ -343,5 +355,9 @@ if (Test-Path $agents) {
   $bytes = [System.IO.File]::ReadAllBytes($agents); $bad = ($bytes | Where-Object { $_ -gt 127 }).Count
   Say "rules\AGENTS.md：$($bytes.Length) 字节，非 ASCII $bad 个 $(if($bad -eq 0){'✅'}else{'⚠ 应为 0'})"
 }
-Say "`n安装完成。回滚： pwsh -File `"$($MyInvocation.MyCommand.Path)`" -Uninstall"
+Say "`n安装完成（仅插件档位已写入；原生 Antigravity 权限尚未同步）。"
+Say "请先阅读 默认全权警告.md，确认会中断/重启宿主后再执行："
+Say "  pwsh -NoProfile -File `"$cfg\agy-tier.ps1`" $effectiveTier -Yes"
+Say "切换后核验： pwsh -NoProfile -File `"$cfg\agy-tier.ps1`" -Status"
+Say "回滚： pwsh -File `"$($MyInvocation.MyCommand.Path)`" -Uninstall"
 Say "备份位置：$bak"
