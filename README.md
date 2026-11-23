@@ -93,6 +93,9 @@ powershell -NoProfile -File .\verify.ps1
 
 ## 验证与已知范围
 
+MCP 工具注解与扫描分层验证见 [M8ven / MCP 验证说明](docs/M8VEN_VALIDATION.md)。仓库包含第三方 REA Android 桥接器，不等于整个 DSHA 都作为单一 MCP 服务对外运行；自动扫描的工具数量可能只覆盖部分入口。
+
+
 本次发行只执行发行说明中列出的源码和包装检查。测试项数、跳过项和未测范围分别记录，不以旧报告或文件存在代替运行结果。Windows 以外环境、全新机器安装、真实账号服务及任意第三方项目不作通用可用性承诺。
 
 版本与证据：[发行说明](docs/releases/V1.0.md)、[版本方案](VERSION_SCHEME.md)、[Programer 来源](docs/PROGRAMER_PROVENANCE.md)。
