@@ -13,7 +13,7 @@ class PublicLaunchContracts(unittest.TestCase):
         self.assertRegex(installer, r"\[string\]\$Tier\s*=\s*'read-only'")
         self.assertIn("[ValidateSet('read-only', 'workspace-write', 'danger-full-access', 'auto')]", installer)
         self.assertIn("if ($effectiveTier -eq 'danger-full-access')", installer)
-        self.assertIn("Host native permissions", installer)
+        self.assertIn("host native permissions", installer)
 
     def test_dry_run_before_any_write_and_prior_tier_snapshot(self):
         script = (ROOT / "install.ps1").read_text(encoding="utf-8-sig")

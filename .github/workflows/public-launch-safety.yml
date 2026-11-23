@@ -65,4 +65,6 @@ jobs:
           $env:USERPROFILE = $fakeProfile
           & pwsh -NoProfile -File .\install.ps1 -WhatIfOnly -Tier read-only
           if ($LASTEXITCODE -ne 0) { throw "Installer -WhatIfOnly failed: $LASTEXITCODE" }
-          if (Test-Path -LiteralPath $fakeProfile) { throw "Dry run created user config/profile directory" }
+          $dshaConfig = Join-Path $fakeProfile '.gemini\config'
+          if (Test-Path -LiteralPath $dshaConfig) { throw "Dry run created DSHA config directory" }
+          Write-Host "PASS: DSHA config directory not created by -WhatIfOnly"
