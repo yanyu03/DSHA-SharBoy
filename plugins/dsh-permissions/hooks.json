@@ -1,6 +1,6 @@
 {
   "dsh-permissions": {
-    "enabled": false,
+    "enabled": true,
     "PreToolUse": [
       {
         "matcher": ".*",

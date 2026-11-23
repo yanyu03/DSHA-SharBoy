@@ -1,0 +1,70 @@
+name: Public Launch Safety
+on:
+  pull_request:
+    paths:
+      - 'install.ps1'
+      - 'plugins/dsh-permissions/tier.json'
+      - 'plugins/dsh-permissions/hooks.json'
+      - 'README.md'
+      - '安装教程.md'
+      - '默认全权警告.md'
+      - 'docs/README.en.md'
+      - 'docs/INSTALL_SAFETY.md'
+      - 'docs/DEMO_60S.md'
+      - 'docs/PUBLIC_LAUNCH_KIT.md'
+      - 'scripts/test_public_launch_contract.py'
+      - '.github/workflows/public-launch-safety.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'install.ps1'
+      - 'plugins/dsh-permissions/tier.json'
+      - 'plugins/dsh-permissions/hooks.json'
+      - 'README.md'
+      - '安装教程.md'
+      - '默认全权警告.md'
+      - 'docs/README.en.md'
+      - 'docs/INSTALL_SAFETY.md'
+      - 'docs/DEMO_60S.md'
+      - 'docs/PUBLIC_LAUNCH_KIT.md'
+      - 'scripts/test_public_launch_contract.py'
+      - '.github/workflows/public-launch-safety.yml'
+jobs:
+  static-doc-and-contract:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify onboarding contracts and router regression
+        run: |
+          python3 -m unittest discover -s scripts -p 'test_public_launch_contract.py' -v
+          python3 -m unittest discover -s scripts -p 'test_kaeru_router_safety.py' -v
+  windows-whatif-no-write:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Parse installer and assert dry-run creates no profile directory
+        shell: pwsh
+        run: |
+          $null = $tokens = $errors = $null
+          $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path (Get-Location) 'install.ps1'), [ref]$tokens, [ref]$errors)
+          if ($errors.Count -ne 0) { throw ($errors | Out-String) }
+          $fakeProfile = Join-Path $env:RUNNER_TEMP 'dsha-public-launch-whatif-must-not-create'
+          if (Test-Path $fakeProfile) { Remove-Item -LiteralPath $fakeProfile -Recurse -Force }
+          $env:USERPROFILE = $fakeProfile
+          & pwsh -NoProfile -File .\install.ps1 -WhatIfOnly -Tier read-only
+          if ($LASTEXITCODE -ne 0) { throw "Installer -WhatIfOnly failed: $LASTEXITCODE" }
+          $dshaConfig = Join-Path $fakeProfile '.gemini\config'
+          if (Test-Path -LiteralPath $dshaConfig) { throw "Dry run created DSHA config directory" }
+          Write-Host "PASS: DSHA config directory not created by -WhatIfOnly"

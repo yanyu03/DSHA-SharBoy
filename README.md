@@ -1,16 +1,41 @@
-# DSHA-SharBoy V1.0
+# DSHA-SharBoy — Local AI Agent Tool Orchestration
+
+[中文](README.md) · [English](docs/README.en.md) · [60 秒演示脚本](docs/DEMO_60S.md) · [Public Launch Kit](docs/PUBLIC_LAUNCH_KIT.md)
 
 [![M8ven Verified](https://m8ven.ai/badge/mcp/yanyu03/dsha-sharboy?variant=verified)](https://m8ven.ai/mcp/yanyu03/dsha-sharboy?s=readme)
-[![M8ven Verified](https://m8ven.ai/badge/mcp/yanyu03-dsha-sharboy-15lh87?variant=verified&v=977cd46eb64be6bb737f4d0b93c79054)](https://m8ven.ai/mcp/yanyu03-dsha-sharboy-15lh87?s=readme)
 
-> 欢迎收录、测试和反馈！请通过 [GitHub Issues](https://github.com/yanyu03/DSHA-SharBoy/issues) 提供可复现的问题与建议；我们会尽力持续完善 DSHA。
+**让 AI Agent 按规则调用本地工具，而不是盲目执行。** DSHA 聚焦工具发现、环境检查、权限控制与可追溯结果。
 
+**最新 GitHub Release：V1.1（2026-11-03）** · **主分支：持续修复与试用准备** · **主要验证环境：Windows x64** · [MIT 许可](LICENSE)
 
-面向本地 AI 开发工作流的工具调度与工程记录套件。
+[查看 V1.1 Release](https://github.com/yanyu03/DSHA-SharBoy/releases/tag/V1.1) · [V1.1 变更说明](docs/releases/V1.1.md) · [版本规则](VERSION_SCHEME.md) · [反馈 Issue](https://github.com/yanyu03/DSHA-SharBoy/issues)
 
-**发行版本：V1.0** · 机器版本：`1.0.0` · 主要验证环境：Windows x64
+> **版本事实**：V1.1 标签已发布，但 `main` 上有后续的注解和安装器修复，**不在旧标签内**。仓库历史 `VERSION` 文件仍为 `1.0.0`，是待下次版本发布统一的遗留机器字段，不应据此误称当前 Release 是 V1.0；详见 [版本规则](VERSION_SCHEME.md)。
+> **安全边界**：这是本地策略和工具管理工程，不是 OS 级沙箱；不会自动给 Agent 安全隔离或万能执行能力。
 
-[下载 V1.0](https://github.com/yanyu03/DSHA-SharBoy/releases/tag/V1.0) · [发行说明](docs/releases/V1.0.md) · [更新记录](CHANGELOG.md) · [MIT 许可证](LICENSE)
+## 60 秒看懂（可复现）
+
+- 看流程：`Index / Router → EnvFeel → Gate / BaseTool → 执行/拒绝 → TraceReceipt`（协议视图，非所有入口都已端到端实现）
+- 看拒绝：`python scripts/router.py route zzzyyyxxx-no-registered-tool`（**预期** `ERR_NO_MATCH`、退出码 `2`；实际请本机验证）
+- 看环境：`pwsh -NoProfile -File .\install.ps1 -WhatIfOnly`（主分支的预演不应写入配置）
+- 看完整演示： [逐秒录制脚本与事实核验](docs/DEMO_60S.md)
+
+## 新用户从哪里开始
+
+Windows + Antigravity + Python 3.10+：先克隆 **main** 阅读代码与安装范围，或下载对应源码归档；此处的安装安全改动晚于 V1.1 标签：
+
+```powershell
+git clone https://github.com/yanyu03/DSHA-SharBoy.git
+cd DSHA-SharBoy
+pwsh -NoProfile -File .\install.ps1 -WhatIfOnly
+# 确认写入、权限和回滚范围后，才正式安装
+pwsh -NoProfile -File .\install.ps1 -Tier read-only
+pwsh -NoProfile -File .\verify.ps1
+```
+
+**重要**：安装只设置插件档位与钩子，**不会自动同步 Antigravity 原生权限**。阅读 [安全安装指南](docs/INSTALL_SAFETY.md)，经明确确认并接受宿主重启后，再运行 `agy-tier.ps1 read-only -Yes` 同步原生设置，随后使用 `-Status` 核验。不要以为安装结束就具备操作系统级只读保护。
+
+---
 
 ## 小白快速读懂：DSHA 是什么？
 
@@ -34,7 +59,7 @@
 
 ### 新手从哪里开始？
 
-先看 [下载与安装](#下载与安装)，获取 V1.0 源码包，再按 [安装教程](安装教程.md)操作。Windows 用户建议先执行安装预演 `powershell -NoProfile -File .\install.ps1 -WhatIfOnly`，核对路径、依赖和改动范围，再决定是否安装。安装后用仓库提供的验证脚本检查；不要直接给不熟悉的 Agent 完整系统权限。
+先阅读 [安全安装指南](docs/INSTALL_SAFETY.md) 与 [安装教程](安装教程.md)。新用户建议从 `main` 克隆源码，并执行 `pwsh -NoProfile -File .\install.ps1 -WhatIfOnly` 进行无配置写入的预演；确认变更范围后，才考虑安装并同步原生权限。不要给陌生 Agent 完整系统权限。
 
 ### 怎么让 Agent 快速熟悉 DSHA 并开始干活？
 
@@ -66,22 +91,11 @@
 
 ## 下载与安装
 
-发行页提供 `DSHA-SharBoy-V1.0-source.zip`、`DSHA-SharBoy-V1.0-source.tar`、`SHA256SUMS.txt` 和 `SOURCE_MANIFEST.json`。ZIP 与 TAR 包含同一提交的源码，根目录统一为 `DSHA-SharBoy-V1.0/`。它们是源码分发包，不是独立可执行安装包。
+V1.1 目前提供 GitHub 自动生成的源码归档，没有独立安装程序或自定义 ZIP/TAR 资产。旧 V1.0 的定制源码归档属于历史发布，不可混充 V1.1。
 
-解压后，先阅读[安装教程](安装教程.md)并预演：
+**推荐新试用者从 `main` 克隆**，参照上面的无写入预演与显式 `-Tier read-only` 安装。要应用保守的**原生**宿主权限，还必须在查看提示并确认重启影响后，执行 [安全安装指南](docs/INSTALL_SAFETY.md) 的单独同步步骤。
 
-```powershell
-powershell -NoProfile -File .\install.ps1 -WhatIfOnly
-```
-
-确认目标目录、宿主及依赖后，可手动运行安装与检查：
-
-```powershell
-powershell -NoProfile -File .\install.ps1
-powershell -NoProfile -File .\verify.ps1
-```
-
-运行脚本仍受本机执行策略限制。安装器、验证脚本可能写入本机配置；源码下载本身不会安装或修改环境。
+**注意**：安装过程可能写入 `%USERPROFILE%\.gemini\config`、用户 PATH、PowerShell 执行策略，可能探测和下载工具依赖；`-WhatIfOnly` 不会执行这些修改，但正式安装会产生本机副作用。详见 [安装教程](安装教程.md)、[全权风险说明](默认全权警告.md)。
 
 ## 环境与外部工具
 
@@ -98,7 +112,7 @@ MCP 工具注解与扫描分层验证见 [M8ven / MCP 验证说明](docs/M8VEN_V
 
 本次发行只执行发行说明中列出的源码和包装检查。测试项数、跳过项和未测范围分别记录，不以旧报告或文件存在代替运行结果。Windows 以外环境、全新机器安装、真实账号服务及任意第三方项目不作通用可用性承诺。
 
-版本与证据：[发行说明](docs/releases/V1.0.md)、[版本方案](VERSION_SCHEME.md)、[Programer 来源](docs/PROGRAMER_PROVENANCE.md)。
+版本与证据：[V1.1 发布说明](docs/releases/V1.1.md)、[V1.0 历史说明](docs/releases/V1.0.md)、[版本方案](VERSION_SCHEME.md)、[Programer 来源](docs/PROGRAMER_PROVENANCE.md)。
 
 ## 许可证与第三方
 
@@ -141,7 +155,7 @@ flowchart LR
     F -. "失败或超时" .-> X
 ```
 
-协议版本继续使用 [v1.2.0-std](DSHA_OPEN_PROTOCOL_SPEC.md)，独立于 V1.0 发行版本。第六阶段的历史标识为 `sandbox_execution`，**但当前不是操作系统级沙箱**；宿主子进程仍可在其 OS 权限范围内访问资源，Gate 与启动路径检查也不能代替容器、网络或文件系统隔离。
+协议版本继续使用 [v1.2.0-std](DSHA_OPEN_PROTOCOL_SPEC.md)，独立于 V1.1 发行版本。第六阶段的历史标识为 `sandbox_execution`，**但当前不是操作系统级沙箱**；宿主子进程仍可在其 OS 权限范围内访问资源，Gate 与启动路径检查也不能代替容器、网络或文件系统隔离。
 
 ### 架构思维导图
 
@@ -191,7 +205,7 @@ mindmap
 | Scribe 输出收容 | `scripts/kdi_scribe_output.py` | POSIX 托管输出实验，未接入正式 Scribe；不宣称 Windows 等效保护 |
 | REA 依赖安全 | `skills/reverse-engineer-anything/tools/rea/package.json` | Zod 固定升级至 4.6.6，并有 `scripts/test_kdi_rea_dependency_security.py` 防回退测试；未验证所有用户安装环境 |
 
-研发过程和待验证项见 [FatFish Draft PR #6](https://github.com/yanyu03/DSHA-SharBoy/pull/6)。计划继续研究可逆协议适配、调度与资源管理、确定性执行与回放、风险驱动验证、Windows/Linux 回归；**路线图不是功能承诺**。本 README 所述 FatFish 状态不代表 `main` 或 V1.0 发布包已经吸收这些更新。
+研发过程和待验证项见 [FatFish Draft PR #6](https://github.com/yanyu03/DSHA-SharBoy/pull/6)。计划继续研究可逆协议适配、调度与资源管理、确定性执行与回放、风险驱动验证、Windows/Linux 回归；**路线图不是功能承诺**。本 README 所述 FatFish 状态不代表 `main` 或 V1.1 标签已经吸收这些更新。
 
 ## 设计理念
 
