@@ -420,6 +420,15 @@ class ReaJadxBridge {
     return json(result);
   }
 
+  /** Preserve upstream tool schemas and handlers while declaring explicit MCP risk hints. */
+  private static Tool withHints(Tool original, boolean readOnly, boolean destructive,
+      boolean idempotent, boolean openWorld) {
+    return new Tool(original.getName(), original.getInputSchema(), original.getDescription(),
+        original.getOutputSchema(), original.getTitle(),
+        new ToolAnnotations(null, readOnly, destructive, idempotent, openWorld),
+        original.getIcons(), original.getExecution(), original.getMeta());
+  }
+
   public static void main(String[] args) throws Exception {
     PrintStream protocolOut = System.out;
     System.setOut(System.err);
@@ -436,7 +445,10 @@ class ReaJadxBridge {
     MethodToolsKt.registerMethodTools(server, holder);
     XrefToolsKt.registerXrefTools(server, holder);
     ReaJadxBridge bridge = new ReaJadxBridge(holder);
-    Tool loadTool = server.getTools().get("load_apk").getTool();
+    // Loading a new APK replaces the active analysis session, so it is not read-only
+    // or idempotent; stay conservative about the destructive hint.
+    Tool loadTool = withHints(server.getTools().get("load_apk").getTool(),
+        false, true, false, false);
     server.removeTool("load_apk");
     server.addTool(loadTool, (connection, request, continuation) ->
         bridge.load(request.getArguments(), defaults, continuation));
@@ -445,9 +457,17 @@ class ReaJadxBridge {
         "get_xrefs_to_class", "get_xrefs_to_method");
     for (String name : new ArrayList<>(server.getTools().keySet()))
       if (!consumed.contains(name)) server.removeTool(name);
+    // Keep upstream implementations for these two metadata readers unchanged.
+    for (String name : List.of("get_app_info", "get_android_manifest")) {
+      var registered = server.getTools().get(name);
+      server.removeTool(name);
+      server.addTool(withHints(registered.getTool(), true, false, true, false),
+          registered.getHandler());
+    }
     Tool diagnostics = new Tool("rea_jvm_status",
         new ToolSchema(null, new kotlinx.serialization.json.JsonObject(Map.of()), List.of(), null),
-        "Observed worker JVM and metadata scope", null, null, null, null, null, null);
+        "Observed worker JVM and metadata scope", null, null,
+        new ToolAnnotations(null, true, false, true, false), null, null, null);
     server.addTool(diagnostics, (connection, request, continuation) -> bridge.handle("rea_jvm_status", request.getArguments()));
     for (String name : List.of("list_classes", "get_class_summary",
         "get_method_body", "get_xrefs_to_class", "get_xrefs_to_method")) {
@@ -471,7 +491,8 @@ class ReaJadxBridge {
         default -> "Complete static using-node inventory for an exact class or selected method overload; one node may contain multiple invoke instructions, and source lines are unresolved.";
       };
       Tool narrowed = new Tool(name, new ToolSchema(null, new kotlinx.serialization.json.JsonObject(properties),
-          tool.getInputSchema().getRequired(), null), description, null, null, null, null, null, null);
+          tool.getInputSchema().getRequired(), null), description, null, null,
+          new ToolAnnotations(null, true, false, true, false), null, null, null);
       server.addTool(narrowed, (connection, request, continuation) -> {
         try { return bridge.handle(name, request.getArguments()); }
         catch (InputFailure error) { return text(JSON.toJson(Map.of(
